@@ -2476,6 +2476,16 @@ function renderHojaVida(){
   const condExtra=(hv.conductores||[]);
   const conductores=[...condMant,...condExtra.filter(c=>!condMant.find(m=>m.cedula===c.cedula))].slice(0,20);
 
+  // Costo del año en curso: se calcula con los mantenimientos registrados,
+  // no con el valor histórico del inventario.
+  const ANIO_DIN=String(new Date().getFullYear());
+  const costoAnioReg=a=>rr.filter(r=>String(r.fechaIngreso||r.fecha||'').indexOf(a)===0)
+                          .reduce((s,r)=>s+(parseInt(r.costo)||0),0);
+  const nAnioReg=a=>rr.filter(r=>String(r.fechaIngreso||r.fecha||'').indexOf(a)===0).length;
+  const costoInv=a=>((v.costos&&parseInt(v.costos[a]))||0);
+  // En el año en curso se suma lo que ya venía del inventario con lo registrado aquí.
+  const costoMantAnio=a=>(a===ANIO_DIN)?(costoInv(a)+costoAnioReg(a)):costoInv(a);
+
   // Documentos con datos guardados
   const docs=hv.documentos||{};
   // Condición guardada
@@ -2589,9 +2599,24 @@ function renderHojaVida(){
         <tr><td>Teléfono</td><td>${v.telefono||'—'}</td></tr>
         <tr><td>Conductor asignado</td><td>${v.conductor||'—'}</td></tr>
         <tr><td>C.C. conductor</td><td>${v.cedulaConductor||'—'}</td></tr>
-        ${['2023','2024','2025','2026'].map(a=>`<tr><td>Mantenimiento ${a}</td><td>${(v.costos&&v.costos[a])?fmtCOP(v.costos[a]):'—'}</td></tr>`).join('')}
+        ${['2023','2024','2025','2026'].map(a=>{
+          const din=(a===ANIO_DIN);
+          const val=costoMantAnio(a);
+          const inv=costoInv(a), reg=din?costoAnioReg(a):0, n=din?nAnioReg(a):0;
+          let det='';
+          if(din&&(inv||reg)){
+            const partes=[];
+            if(inv)partes.push('inventario '+fmtCOP(inv));
+            partes.push(n+' registrado(s) aquí'+(reg?' '+fmtCOP(reg):''));
+            det=`<div style="font-size:10px;color:var(--text2);margin-top:2px">${partes.join(' + ')}</div>`;
+          }else if(din){
+            det='<div style="font-size:10px;color:var(--text2);margin-top:2px">Sin mantenimientos registrados</div>';
+          }
+          return `<tr><td>Mantenimiento ${a}${din?' <span class="hv-badge" style="background:#378ADD22;color:#378ADD">en curso</span>':''}</td>
+            <td>${val?fmtCOP(val):'—'}${det}</td></tr>`;
+        }).join('')}
         ${['2024','2025','2026'].map(a=>`<tr><td>Combustible ${a}</td><td>${(v.combustibleCosto&&v.combustibleCosto[a])?fmtCOP(v.combustibleCosto[a]):'—'}</td></tr>`).join('')}
-        <tr><td><strong>Total histórico mant.</strong></td><td><strong>${fmtCOP(Object.values(v.costos||{}).reduce((a,b)=>a+(b||0),0))}</strong></td></tr>
+        <tr><td><strong>Total histórico mant.</strong></td><td><strong>${fmtCOP(['2023','2024','2025','2026'].reduce((s,a)=>s+costoMantAnio(a),0))}</strong></td></tr>
       </table>
     </div>
   </div>
