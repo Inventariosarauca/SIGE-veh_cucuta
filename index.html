@@ -229,7 +229,7 @@ tr:hover td{background:#f8fafc}
       <div>
         <div style="font-size:14px;font-weight:700;color:#0d2a4a;line-height:1.2">Mantenimiento Vehicular</div>
         <div style="font-size:11px;color:#64748b">Dirección Ejecutiva Seccional de Cúcuta</div>
-        <div style="font-size:9.5px;color:#94a3b8;margin-top:1px">Versión 1.11 · 06/08/2026</div>
+        <div style="font-size:9.5px;color:#94a3b8;margin-top:1px">Versión 1.11 · 10/08/2026</div>
       </div>
     </div>
     <div style="font-size:12px;color:#64748b;margin:14px 0 12px">Ingrese con su cuenta institucional para consultar y registrar información de la flota.</div>
@@ -322,6 +322,25 @@ tr:hover td{background:#f8fafc}
       <div class="card">
         <div class="slbl"><i class="ti ti-list-details"></i>Estado actual de la flota</div>
         <div id="flota-det"></div>
+      </div>
+    </div>
+
+    <!-- EJECUCIÓN DEL AÑO EN CURSO -->
+    <div class="card" style="margin-bottom:1rem">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+        <div>
+          <div class="slbl" style="margin:0"><i class="ti ti-chart-histogram"></i>Valor ejecutado en mantenimiento <span id="ej-anio"></span></div>
+          <div style="font-size:10.5px;color:var(--text2);margin-top:3px" id="ej-sub">—</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:22px;font-weight:800;color:var(--c1);line-height:1" id="ej-total">$ 0</div>
+          <div style="font-size:10px;color:var(--text2)">Total ejecutado</div>
+        </div>
+      </div>
+      <div class="dlegend" id="leg-ejec"></div>
+      <div class="cwrap" style="height:210px"><canvas id="ch-ejec"></canvas></div>
+      <div id="ej-vacio" style="display:none;font-size:11.5px;color:var(--text2);text-align:center;padding:14px 0">
+        Aún no hay mantenimientos con costo registrados en el año.
       </div>
     </div>
 
@@ -947,7 +966,7 @@ const ESTADOS=['En taller','Listo para entrega','En garantía','Entregado confor
 const CE=['#EF9F27','#1D9E75','#E24B4A','#378ADD'];
 const CT={'Preventivo/Correctivo':'#7C3AED','Preventivo':'#378ADD','Correctivo':'#EF9F27','Garantía':'#E24B4A'};
 
-let regs=[], raReg=null, chTipo=null, chEst=null, chSat=null;
+let regs=[], raReg=null, chTipo=null, chEst=null, chSat=null, chEjec=null;
 let fc=null, fctx=null, fdb=false, ux=0, uy=0;
 
 const DESC_PREV_CORR = 'Cambio de aceite de motor, filtro de aceite y filtro de aire. Revisión, ajuste y corrección del nivel de liquidos y lubricantes (hidráulico, transmisión, diferencial, dirección, liquido de frenos y refrigerante). Revisión del sistema de frenos. Alineación de la dirección, rotación y balanceo de llantas. Sincronización del motor, revisión de sistemas eléctricos y de suspensión.';
@@ -1310,6 +1329,79 @@ function renderHist(){
 
 
 // ── COSTOS EN DASHBOARD ───────────────────────────────
+// ── EJECUCIÓN DE MANTENIMIENTO DEL AÑO EN CURSO ───────
+const MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+function renderEjecucion(){
+  const cv=document.getElementById('ch-ejec');
+  if(!cv)return;
+  const anio=String(new Date().getFullYear());
+  const et=document.getElementById('ej-anio');if(et)et.textContent=anio;
+
+  // Costos registrados en el aplicativo, mes a mes
+  const porMes=new Array(12).fill(0);
+  const cuentaMes=new Array(12).fill(0);
+  regs.forEach(r=>{
+    const f=String(r.fechaIngreso||r.fecha||'');
+    if(f.indexOf(anio+'-')!==0)return;
+    const m=parseInt(f.split('-')[1],10)-1;
+    if(isNaN(m)||m<0||m>11)return;
+    porMes[m]+=parseInt(r.costo)||0;
+    cuentaMes[m]++;
+  });
+  const totalReg=porMes.reduce((a,b)=>a+b,0);
+  const nReg=cuentaMes.reduce((a,b)=>a+b,0);
+
+  // Saldo que ya traía el inventario para el mismo año
+  const baseInv=Object.values(FLOTA).reduce((a,v)=>a+((v.costos&&parseInt(v.costos[anio]))||0),0);
+  const totalEjec=baseInv+totalReg;
+
+  const elT=document.getElementById('ej-total');
+  if(elT)elT.textContent=fmtCOP(totalEjec);
+  const sub=document.getElementById('ej-sub');
+  if(sub)sub.innerHTML=baseInv
+    ? `Saldo del inventario ${fmtCOP(baseInv)} + ${nReg} mantenimiento(s) registrado(s) ${fmtCOP(totalReg)}`
+    : `${nReg} mantenimiento(s) registrado(s) en el aplicativo`;
+
+  const leg=document.getElementById('leg-ejec');
+  if(leg)leg.innerHTML='<span><span class="lsq" style="background:#378ADD"></span>Registrado en el aplicativo</span>'+
+    (baseInv?'<span><span class="lsq" style="background:#a8cce0"></span>Saldo inicial del inventario</span>':'');
+
+  const vac=document.getElementById('ej-vacio');
+  if(!totalReg){
+    cv.style.display='none';
+    if(vac)vac.style.display='block';
+    if(chEjec){chEjec.destroy();chEjec=null;}
+    return;
+  }
+  cv.style.display='block';
+  if(vac)vac.style.display='none';
+
+  // Acumulado mes a mes, partiendo del saldo del inventario
+  let acum=baseInv;
+  const linea=porMes.map(v=>{acum+=v;return acum;});
+
+  if(chEjec)chEjec.destroy();
+  chEjec=new Chart(cv,{
+    type:'bar',
+    data:{labels:MESES,datasets:[
+      {label:'Ejecutado en el mes',data:porMes,backgroundColor:'#378ADD',borderRadius:6,borderSkipped:false,order:2},
+      {label:'Acumulado del año',data:linea,type:'line',borderColor:'#0d2a4a',backgroundColor:'rgba(13,42,74,.08)',
+       borderWidth:2,pointRadius:2,tension:.3,fill:true,order:1,yAxisID:'y'}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{
+        label:c=>`${c.dataset.label}: ${fmtCOP(c.raw)}`+
+          (c.datasetIndex===0&&cuentaMes[c.dataIndex]?`  (${cuentaMes[c.dataIndex]} registro(s))`:'')
+      }}},
+      scales:{
+        x:{grid:{display:false},ticks:{color:'#888',font:{size:10}}},
+        y:{beginAtZero:true,grid:{color:'rgba(0,0,0,.05)'},
+           ticks:{color:'#888',font:{size:10},callback:v=>v>=1000000?'$'+(v/1000000).toFixed(1)+'M':'$'+(v/1000).toFixed(0)+'K'}}
+      }}
+  });
+}
+
 function renderCostosDash(){
   const totalFlota=regs.reduce((a,r)=>a+(parseInt(r.costo)||0),0);
   const conCosto=regs.filter(r=>r.costo).length;
@@ -1376,6 +1468,7 @@ function renderDash(){
 
   // ── COSTOS DE MANTENIMIENTO ──
   renderCostosDash();
+  renderEjecucion();
 
   const tipos=['Preventivo/Correctivo','Preventivo','Correctivo','Garantía'];
   const tCounts=tipos.map(t=>regs.filter(r=>r.tipoMant===t).length);
@@ -1911,7 +2004,7 @@ function imprimirResumen(id){
 
   <div class="footer">
     <span>Rama Judicial — Dirección Ejecutiva Seccional de Cúcuta</span>
-    <span style="opacity:.6"> · Versión 1.11 (06/08/2026)</span>
+    <span style="opacity:.6"> · Versión 1.11 (10/08/2026)</span>
     <span>ID Registro: ${r.id}</span>
   </div>
 
