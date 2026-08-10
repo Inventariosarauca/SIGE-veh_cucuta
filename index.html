@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -342,6 +342,11 @@ tr:hover td{background:#f8fafc}
       <div id="ej-vacio" style="display:none;font-size:11.5px;color:var(--text2);text-align:center;padding:14px 0">
         Aún no hay mantenimientos con costo registrados en el año.
       </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px;padding-top:12px;border-top:.5px solid var(--border)">
+        <div class="slbl" style="margin:0"><i class="ti ti-list-numbers"></i>Saldo por vehículo</div>
+        <button class="btn btn-sm" id="ej-ver-todos" onclick="toggleSaldoTodos()"><i class="ti ti-eye"></i>Ver los 28</button>
+      </div>
+      <div id="ej-detalle"></div>
     </div>
 
     <!-- INVERSIÓN EN MANTENIMIENTO (solo si hay costos registrados) -->
@@ -1402,6 +1407,58 @@ function renderEjecucion(){
   });
 }
 
+let SALDO_TODOS=false;
+function toggleSaldoTodos(){
+  SALDO_TODOS=!SALDO_TODOS;
+  const b=document.getElementById('ej-ver-todos');
+  if(b)b.innerHTML=SALDO_TODOS
+    ?'<i class="ti ti-eye-off"></i>Solo con movimiento'
+    :'<i class="ti ti-eye"></i>Ver los '+totalFlota();
+  renderSaldoVehiculos();
+}
+
+function renderSaldoVehiculos(){
+  const c=document.getElementById('ej-detalle');
+  if(!c)return;
+  const anio=String(new Date().getFullYear());
+  const filas=Object.entries(FLOTA).map(([p,v])=>{
+    const inv=(v.costos&&parseInt(v.costos[anio]))||0;
+    const rr=regs.filter(r=>r.placa===p&&String(r.fechaIngreso||r.fecha||'').indexOf(anio+'-')===0);
+    const reg=rr.reduce((s,r)=>s+(parseInt(r.costo)||0),0);
+    return {p,v,inv,reg,n:rr.length,total:inv+reg};
+  }).sort((a,b)=>b.total-a.total||a.p.localeCompare(b.p));
+
+  const visibles=SALDO_TODOS?filas:filas.filter(f=>f.total>0||f.n>0);
+  const gran=filas.reduce((s,f)=>s+f.total,0);
+
+  const btn=document.getElementById('ej-ver-todos');
+  if(btn)btn.style.display=(filas.length===visibles.length&&!SALDO_TODOS)?'none':'inline-flex';
+
+  if(!visibles.length){
+    c.innerHTML='<div style="font-size:11.5px;color:var(--text2);text-align:center;padding:10px 0">Ningún vehículo tiene saldo de mantenimiento en '+anio+'.</div>';
+    return;
+  }
+  const mx=Math.max(1,...visibles.map(f=>f.total));
+  c.innerHTML='<div class="tw"><table><thead><tr>'+
+    '<th>Placa</th><th>Vehículo</th><th style="text-align:right">Saldo inventario</th>'+
+    '<th style="text-align:right">Registrado aquí</th><th style="text-align:center">Mant.</th>'+
+    '<th style="text-align:right">Total '+anio+'</th><th style="width:110px">Participación</th>'+
+    '</tr></thead><tbody>'+
+    visibles.map(f=>`<tr>
+      <td><span class="placa">${f.p}</span></td>
+      <td style="font-size:11px">${f.v.marca||''} ${f.v.tipo||''}</td>
+      <td style="text-align:right">${f.inv?fmtCOP(f.inv):'—'}</td>
+      <td style="text-align:right">${f.reg?fmtCOP(f.reg):'—'}</td>
+      <td style="text-align:center">${f.n||'—'}</td>
+      <td style="text-align:right;font-weight:700">${f.total?fmtCOP(f.total):'—'}</td>
+      <td><div class="pbar"><div class="pfill" style="width:${Math.round(f.total/mx*100)}%;background:${colorVeh(f.p)}"></div></div>
+          <span style="font-size:9.5px;color:var(--text2)">${gran?Math.round(f.total/gran*100):0}%</span></td>
+    </tr>`).join('')+
+    `<tr style="background:#f8fafc"><td colspan="5" style="text-align:right;font-weight:700">Total ${anio}</td>
+     <td style="text-align:right;font-weight:800;color:var(--c1)">${fmtCOP(gran)}</td><td></td></tr>`+
+    '</tbody></table></div>';
+}
+
 function renderCostosDash(){
   const totalFlota=regs.reduce((a,r)=>a+(parseInt(r.costo)||0),0);
   const conCosto=regs.filter(r=>r.costo).length;
@@ -1469,6 +1526,7 @@ function renderDash(){
   // ── COSTOS DE MANTENIMIENTO ──
   renderCostosDash();
   renderEjecucion();
+  renderSaldoVehiculos();
 
   const tipos=['Preventivo/Correctivo','Preventivo','Correctivo','Garantía'];
   const tCounts=tipos.map(t=>regs.filter(r=>r.tipoMant===t).length);
@@ -3333,6 +3391,7 @@ async function arrancarApp(){
       mostrarErrorDB('No se pudo conectar con Firebase.');
     }
   }
+
   renderDash();
   renderVehiculos();
   const mv=document.getElementById('modal-veh');
