@@ -229,7 +229,7 @@ tr:hover td{background:#f8fafc}
       <div>
         <div style="font-size:14px;font-weight:700;color:#0d2a4a;line-height:1.2">Mantenimiento Vehicular</div>
         <div style="font-size:11px;color:#64748b">Dirección Ejecutiva Seccional de Cúcuta</div>
-        <div style="font-size:9.5px;color:#94a3b8;margin-top:1px">Versión 1.11 · 10/08/2026</div>
+        <div style="font-size:9.5px;color:#94a3b8;margin-top:1px">Versión 1.11 · 11/08/2026</div>
       </div>
     </div>
     <div style="font-size:12px;color:#64748b;margin:14px 0 12px">Ingrese con su cuenta institucional para consultar y registrar información de la flota.</div>
@@ -280,6 +280,7 @@ tr:hover td{background:#f8fafc}
       <b><i class="ti ti-alert-triangle"></i> Firebase sin configurar.</b> Pegue las credenciales del proyecto de Cúcuta en el bloque <code>firebaseConfig</code> del archivo para habilitar el guardado en la nube.
     </div>
     <div class="krow" id="krow"></div>
+    <div class="krow" style="margin-bottom:1rem"><div class="kpi" id="kpi-taller" style="display:none"></div></div>
 
     <div>
       <div class="card">
@@ -1313,14 +1314,45 @@ async function eliminarReg(id){
 
 
 // ── HISTORIAL ─────────────────────────────────────────
+// ── PERMANENCIA EN TALLER ─────────────────────────────
+// Días entre el ingreso al taller y la salida. Si aún no hay salida,
+// se cuenta contra la fecha de hoy y se marca como "en curso".
+function diasTaller(r){
+  const ini=String(r.fechaIngreso||'').slice(0,10);
+  if(!ini)return null;
+  const fin=String(r.fechaSalida||'').slice(0,10);
+  const abierto=!fin;
+  const d1=new Date(ini+'T00:00:00');
+  const d2=abierto?new Date(new Date().toISOString().slice(0,10)+'T00:00:00'):new Date(fin+'T00:00:00');
+  if(isNaN(d1)||isNaN(d2))return null;
+  const dias=Math.round((d2-d1)/86400000);
+  if(dias<0)return {dias:null,abierto,error:true};
+  return {dias,abierto,error:false};
+}
+
+function txtDias(r){
+  const t=diasTaller(r);
+  if(!t)return '—';
+  if(t.error)return '<span style="color:#8b1a1a">Fechas inconsistentes</span>';
+  const et=t.dias===0?'Mismo día':(t.dias===1?'1 día':t.dias+' días');
+  return t.abierto
+    ? `<span style="color:#7c5800;font-weight:600">${et}</span> <span style="font-size:9.5px;color:var(--text2)">en curso</span>`
+    : `<span style="font-weight:600">${et}</span>`;
+}
+
+// Semáforo por duración: hasta 3 días, hasta 10, o más.
+function colorDias(n){return n<=3?'#1D9E75':(n<=10?'#EF9F27':'#8b1a1a');}
+
 function renderHist(){
   const c=document.getElementById('tabla-hist');
   if(!regs.length){c.innerHTML='<div class="empty"><i class="ti ti-database"></i>Sin registros aún. Cree el primer registro en la pestaña "Nuevo registro".</div>';return;}
-  c.innerHTML='<div class="tw"><table><thead><tr><th>Placa</th><th>Tipo veh.</th><th>Municipio</th><th>Mantenimiento</th><th>Ingreso</th><th>Km</th><th>Taller</th><th>Responsable</th><th>Cédula</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>'+
+  c.innerHTML='<div class="tw"><table><thead><tr><th>Placa</th><th>Tipo veh.</th><th>Municipio</th><th>Mantenimiento</th><th>Ingreso</th><th>Salida</th><th>En taller</th><th>Km</th><th>Taller</th><th>Responsable</th><th>Cédula</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>'+
     regs.map(r=>`<tr>
       <td><span class="placa">${r.placa}</span></td>
       <td>${r.tipoVeh||'—'}</td><td>${r.municipio||'—'}</td><td>${r.tipoMant||'—'}</td>
-      <td>${fmt(r.fechaIngreso)}</td><td>${r.km?r.km+' km':'—'}</td>
+      <td style="white-space:nowrap">${fmt(r.fechaIngreso)}</td>
+      <td style="white-space:nowrap">${fmt(r.fechaSalida)||'—'}</td>
+      <td style="white-space:nowrap">${txtDias(r)}</td><td>${r.km?r.km+' km':'—'}</td>
       <td>${r.taller||'—'}</td><td>${r.responsable||'—'}</td><td>${r.cedula||'—'}</td>
       <td>${bdg(r.estado)}</td>
       <td style="white-space:nowrap">
@@ -1522,6 +1554,21 @@ function renderDash(){
     <div class="kpi"><div class="val" style="color:#7c5800">${enT}</div><div class="lbl">En taller</div><div class="sub">${lst} listos para entrega</div></div>
     <div class="kpi"><div class="val" style="color:#8b1a1a">${gar}</div><div class="lbl">En garantía</div><div class="sub">${gar>0?'⚠ Requieren atención':'Sin garantías activas'}</div></div>
     <div class="kpi"><div class="val" style="color:${conf>=80?'#155230':conf>=50?'#7c5800':'#8b1a1a'}">${conf}%</div><div class="lbl">Tasa de conformidad</div><div class="sub">${ent} de ${tot} conformes</div></div>`;
+
+  // ── PERMANENCIA PROMEDIO EN TALLER ──
+  (function(){
+    const cerr=regs.filter(r=>{const t=diasTaller(r);return t&&!t.error&&!t.abierto;});
+    const abi=regs.filter(r=>{const t=diasTaller(r);return t&&!t.error&&t.abierto;});
+    const el=document.getElementById('kpi-taller');
+    if(!el)return;
+    if(!cerr.length&&!abi.length){el.style.display='none';return;}
+    el.style.display='block';
+    const prom=cerr.length?Math.round(cerr.reduce((a,r)=>a+diasTaller(r).dias,0)/cerr.length*10)/10:0;
+    const may=abi.length?Math.max(...abi.map(r=>diasTaller(r).dias)):0;
+    el.innerHTML=`<div class="val" style="color:${cerr.length?colorDias(prom):'#888'}">${cerr.length?prom:'—'}</div>
+      <div class="lbl">Días promedio en taller</div>
+      <div class="sub">${cerr.length?cerr.length+' mantenimiento(s) cerrado(s)':'Sin cierres aún'}${abi.length?' · '+abi.length+' en curso, el mayor lleva '+may+' día(s)':''}</div>`;
+  })();
 
   // ── COSTOS DE MANTENIMIENTO ──
   renderCostosDash();
@@ -2018,6 +2065,7 @@ function imprimirResumen(id){
       <div class="cell"><div class="cell-lbl">Tipo</div><div class="cell-val">${r.tipoMant||'—'}</div></div>
       <div class="cell"><div class="cell-lbl">Fecha de ingreso</div><div class="cell-val">${fmt(r.fechaIngreso)}</div></div>
       <div class="cell"><div class="cell-lbl">Fecha de salida</div><div class="cell-val">${fmt(r.fechaSalida)||'—'}</div></div>
+      <div class="cell"><div class="cell-lbl">Permanencia en taller</div><div class="cell-val">${txtDias(r)}</div></div>
       <div class="cell"><div class="cell-lbl">Taller</div><div class="cell-val">${r.taller||'—'}</div></div>
       <div class="cell"><div class="cell-lbl">NIT taller</div><div class="cell-val">${r.tallerNit||'—'}</div></div>
       <div class="cell"><div class="cell-lbl">Estado actual</div><div class="cell-val">${r.estado||'—'}</div></div>
@@ -2062,7 +2110,7 @@ function imprimirResumen(id){
 
   <div class="footer">
     <span>Rama Judicial — Dirección Ejecutiva Seccional de Cúcuta</span>
-    <span style="opacity:.6"> · Versión 1.11 (10/08/2026)</span>
+    <span style="opacity:.6"> · Versión 1.11 (11/08/2026)</span>
     <span>ID Registro: ${r.id}</span>
   </div>
 
@@ -2249,6 +2297,7 @@ function mostrarPaginaEncuesta(d){
         <div class="cell"><div class="cell-l">Tipo mantenimiento</div><div class="cell-v">${d.tipoMant||'—'}</div></div>
         <div class="cell"><div class="cell-l">Fecha ingreso</div><div class="cell-v">${fmt2(d.fechaIngreso)}</div></div>
         <div class="cell"><div class="cell-l">Fecha salida</div><div class="cell-v">${fmt2(d.fechaSalida)||'—'}</div></div>
+        <div class="cell"><div class="cell-l">Permanencia</div><div class="cell-v">${txtDias(d)}</div></div>
         <div class="cell" style="grid-column:span 3"><div class="cell-l">Taller</div><div class="cell-v">${d.taller||'—'}${d.tallerNit?' — NIT: '+d.tallerNit:''}</div></div>
       </div>
       ${d.trabajosR?`<div style="margin-top:8px"><div style="font-size:10px;font-weight:600;color:#64748b;margin-bottom:4px">TRABAJOS REALIZADOS</div><div class="tbox">${d.trabajosR}</div></div>`:''}
@@ -2466,8 +2515,8 @@ function renderAll(){
 function exportar(){
   if(!regs.length){alert('No hay datos para exportar');return;}
   const enc=s=>`"${(s||'').toString().replace(/"/g,"''")}"`;
-  const cab='ID,Placa,Clase,Marca,Modelo,Tipo Veh.,Municipio,Tipo Mant.,Fecha Ingreso,Km,Taller,NIT Taller,Responsable,Cargo,Dependencia,Estado,Fecha Entrega,Trabajos Solicitados,Trabajos Realizados\n';
-  const fil=regs.map(r=>[r.id,r.placa,r.clase,r.marca,r.modeloVeh,r.tipoVeh,r.municipio,r.tipoMant,r.fechaIngreso||'',r.km||'',r.taller||'',r.tallerNit||'',r.responsable||'',r.cargo||'',r.dep||'',r.estado,r.fechaEnt||'',enc(r.trabajos),enc(r.trabajosR)].join(',')).join('\n');
+  const cab='ID,Placa,Clase,Marca,Modelo,Tipo Veh.,Municipio,Tipo Mant.,Fecha Ingreso,Fecha Salida,Dias en Taller,Km,Taller,NIT Taller,Responsable,Cargo,Dependencia,Estado,Fecha Entrega,Trabajos Solicitados,Trabajos Realizados\n';
+  const fil=regs.map(r=>[r.id,r.placa,r.clase,r.marca,r.modeloVeh,r.tipoVeh,r.municipio,r.tipoMant,r.fechaIngreso||'',r.fechaSalida||'',(diasTaller(r)&&!diasTaller(r).error?diasTaller(r).dias:''),r.km||'',r.taller||'',r.tallerNit||'',r.responsable||'',r.cargo||'',r.dep||'',r.estado,r.fechaEnt||'',enc(r.trabajos),enc(r.trabajosR)].join(',')).join('\n');
   const blob=new Blob(['\uFEFF'+cab+fil],{type:'text/csv;charset=utf-8;'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download=`Mantenimiento_Vehicular_RJ_Cucuta_${hoy()}.csv`;a.click();
@@ -2844,12 +2893,20 @@ function renderHojaVida(){
   <div class="hv-seccion">
     <div class="hv-sec-hdr"><i class="ti ti-history"></i>Historial de mantenimientos registrados</div>
     ${historial.length?`<table class="hv-tabla">
-      <thead><tr><th>#</th><th>Fecha ingreso</th><th>Fecha salida</th><th>Tipo</th><th>Taller</th><th>Trabajos realizados</th><th>Km</th><th>Estado</th><th style="text-align:right">Costo (COP)</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>Fecha ingreso</th><th>Fecha salida</th><th>En taller</th><th>Tipo</th><th>Taller</th><th>Trabajos realizados</th><th>Km</th><th>Estado</th><th style="text-align:right">Costo (COP)</th><th></th></tr></thead>
       <tbody>
         ${historial.map((r,i)=>`<tr style="${i%2===0?'background:#fafbfc':''}">
           <td style="text-align:center;font-weight:700;color:var(--text2)">${i+1}</td>
           <td>${fmt(r.fechaIngreso)}</td>
           <td>${r.fechaSalida?fmt(r.fechaSalida):'—'}</td>
+          <td style="white-space:nowrap;text-align:center">${(()=>{
+            const t=diasTaller(r);
+            if(!t||t.error)return '<span style="color:#94a3b8">—</span>';
+            const c=t.abierto?'#7c5800':colorDias(t.dias);
+            const et=t.dias===0?'Mismo día':(t.dias===1?'1 día':t.dias+' días');
+            return `<span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:10px;background:${c}1f;color:${c}">${et}</span>`+
+                   (t.abierto?'<div style="font-size:8.5px;color:var(--text2);margin-top:1px">en curso</div>':'');
+          })()}</td>
           <td><span style="font-size:9px;font-weight:600;padding:2px 6px;border-radius:10px;background:${r.tipoMant==='Preventivo'?'#dbeafe':r.tipoMant==='Correctivo'?'#fef3cd':r.tipoMant==='Garantía'?'#fce8e8':'#ede9fe'};color:${r.tipoMant==='Preventivo'?'#1a4d8a':r.tipoMant==='Correctivo'?'#7c5800':r.tipoMant==='Garantía'?'#8b1a1a':'#4a1a8a'}">${r.tipoMant}</span></td>
           <td style="font-size:10px">${r.taller||'—'}</td>
           <td style="font-size:10px;white-space:pre-wrap;min-width:200px">${r.trabajosR||r.trabajos||'—'}</td>
@@ -2860,8 +2917,21 @@ function renderHojaVida(){
         </tr>`).join('')}
       </tbody>
       <tfoot>
+        ${(()=>{
+          const cerr=rr.filter(r=>{const t=diasTaller(r);return t&&!t.error&&!t.abierto;});
+          const abi=rr.filter(r=>{const t=diasTaller(r);return t&&!t.error&&t.abierto;});
+          if(!cerr.length&&!abi.length)return '';
+          const dd=cerr.map(r=>diasTaller(r).dias);
+          const prom=cerr.length?Math.round(dd.reduce((a,b)=>a+b,0)/cerr.length*10)/10:0;
+          const tot=dd.reduce((a,b)=>a+b,0);
+          const partes=[];
+          if(cerr.length)partes.push(`Promedio <strong>${prom}</strong> día(s) · acumulado <strong>${tot}</strong> día(s) en ${cerr.length} mantenimiento(s) cerrado(s) · mínimo ${Math.min(...dd)} / máximo ${Math.max(...dd)}`);
+          if(abi.length)partes.push(`<span style="color:#7c5800;font-weight:600">${abi.length} en curso</span>`);
+          return `<tr style="background:#f0f4f8"><td colspan="11" style="padding:7px 12px;font-size:10px;color:var(--text2);text-align:left">
+            <i class="ti ti-clock-hour-4"></i> Permanencia en taller: ${partes.join(' · ')}</td></tr>`;
+        })()}
         <tr style="background:#1a3a5c;color:#fff">
-          <td colspan="8" style="text-align:right;font-weight:700;padding:9px 12px;color:#fff">VALOR TOTAL INVERTIDO EN EL VEHÍCULO ${placa}</td>
+          <td colspan="9" style="text-align:right;font-weight:700;padding:9px 12px;color:#fff">VALOR TOTAL INVERTIDO EN EL VEHÍCULO ${placa}</td>
           <td style="text-align:right;font-weight:800;font-size:13px;padding:9px 12px;color:#fff;white-space:nowrap">${fmtCOP(rr.reduce((a,r)=>a+(parseInt(r.costo)||0),0))}</td>
           <td style="background:#1a3a5c"></td>
         </tr>
@@ -3391,6 +3461,7 @@ async function arrancarApp(){
       mostrarErrorDB('No se pudo conectar con Firebase.');
     }
   }
+
   renderDash();
   renderVehiculos();
   const mv=document.getElementById('modal-veh');
